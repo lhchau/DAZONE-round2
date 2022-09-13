@@ -1,0 +1,57 @@
+---
+title: "Untitled"
+author: "Hoang-Chau Luong"
+date: "6/1/2022"
+output: 
+  html_document:
+    number_sections: yes
+    toc: yes
+    code_folding: hide
+    theme: readable
+    highlight: haddock
+  pdf_document:
+    toc: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(dunnr)
+extrafont::loadfonts(device = "win", quiet = TRUE)
+theme_set(theme_td())
+set_geom_fonts()
+set_palette()
+```
+
+```{r message=FALSE, warning=FALSE}
+inject.dot <- function(df){
+  names(df) <- gsub(' ', '_', names(df));
+  df
+}
+
+data <- read_csv("raw_data.csv") %>%
+  inject.dot()
+
+glimpse(data)
+str(data)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,530 @@
+---
+title: "Round 2: DAZONE"
+author: "Hoang-Chau Luong"
+date: "06/10/2022"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    code_folding: hide
+    theme: readable
+    highlight: haddock
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(lubridate)
+options(scipen = 20)
+
+theme_set(theme_light())
+```
+
+# **Import data**
+
+## **Front end & Back end**
+
+```{r warning=FALSE, message=FALSE}
+front_end <- read_csv("data_round_2/Front-end dataset.csv") %>%
+  mutate(date = as.POSIXct(timestamp/1e3, origin = "1970-01-01", tz = "UTC-7")) %>%
+  select(-6, -7)
+
+back_end <- read_csv("data_round_2/Back-end dataset.csv") %>%
+  mutate(date = as.POSIXct(timestamp/1e3, origin = "1970-01-01", tz = "UTC-7"))
+
+back_end %>%
+  inner_join(user_type) %>%
+  select(id) %>%
+  unique()
+  
+```
+
+## **New user**
+
+```{r}
+new_user <- front_end %>%
+  select(id, screenid) %>%
+  unique() %>%
+  filter(screenid != 11) %>%
+  group_by(id) %>%
+  summarise(type = "new") %>%
+  ungroup()
+```
+
+### **Front end new user**
+
+```{r}
+front_end_ui <- front_end %>%
+  left_join(new_user, by = "id") %>%
+  mutate(type = ifelse(is.na(type), "old", type))
+```
+
+### **User type**
+
+```{r}
+user_type <- front_end_ui %>%
+  group_by(id, type) %>%
+  summarize(n = n()) %>%
+  select(-n) %>%
+  ungroup()
+```
+
+## **User have B**
+
+```{r}
+user_B <- back_end %>%
+  filter(stepresult == "B") %>%
+  select(id, stepresult) %>%
+  unique()
+```
+
+## **Back end list id**
+
+```{r}
+back_end_list_id <- back_end %>%
+  select(id) %>%
+  unique()
+```
+
+### **Number of B each user**
+
+```{r}
+B_status_backend <- back_end %>%
+  filter(stepresult == "B") %>%
+  group_by(id) %>%
+  summarize(B_num = n()) %>%
+  right_join(back_end_list_id, by = "id") %>%
+  mutate(B_num = ifelse(is.na(B_num), 0, B_num))
+```
+
+## **User retry**
+
+```{r}
+user_retry <- back_end %>%
+  mutate(encode = ifelse(stepresult == "B", 1, 0)) %>%
+  group_by(id) %>%
+  mutate(next_code = lead(encode, order_by = id)) %>%
+  mutate(have_retrived = ((encode == 0 & next_code == 1) | 
+                            (encode == 0 & next_code == 0))) %>%
+  filter(have_retrived == TRUE) %>%
+  select(id) %>%
+  unique()
+```
+
+### **Number of retry each user**
+
+```{r}
+number_user_retry <- back_end %>%
+  mutate(encode = ifelse(stepresult == "B", 1, 0)) %>% 
+  group_by(id) %>%
+  arrange(date) %>% 
+  mutate(next_code = lead(encode, order_by = id)) %>% 
+  ungroup() %>%
+  filter(!is.na(next_code)) %>%
+  group_by(id) %>%
+  summarize(retry_rate = sum(encode == 0 & next_code == 0) + sum(encode == 0 & next_code == 1)) %>%
+  right_join(back_end_list_id) %>%
+  mutate(retry_rate = ifelse(is.na(retry_rate), 0, retry_rate))
+```
+
+### **Number of retry each user & B status**
+
+```{r}
+number_user_retry_and_B_status <- number_user_retry %>%
+  left_join(B_status_backend, by = "id") %>%
+  mutate(B_num = ifelse(B_num>=1, 1, 0))
+```
+
+### **Number of retry each user & type user**
+
+```{r}
+number_user_retry_and_user_type <- number_user_retry %>%
+  inner_join(user_type)
+```
+
+### **Number of retry each user & type user & B status**
+```{r}
+number_user_retry_and_B_status_and_user_type <- number_user_retry_and_B_status %>%
+  inner_join(user_type)
+```
+
+
+## **Time different between 2 sequential events**
+
+### **Time diff 15 minutes**
+
+```{r}
+time_diff <- front_end %>%
+  arrange(date) %>%
+  group_by(id) %>%
+  mutate(next_date = lead(date),
+         time_diff = as.numeric(difftime(
+         strptime(next_date, format="%Y-%m-%d %H:%M:%S"),
+         strptime(date, format="%Y-%m-%d %H:%M:%S"),
+         units = "secs"))) %>%
+  ungroup()
+
+time_diff_count_900 <- time_diff %>%
+  group_by(id) %>%
+  filter(time_diff >= 900) %>%
+  summarise(n = n()) 
+
+time_diff_15_min <- time_diff %>%
+  left_join(time_diff_count_900) %>%
+  mutate(n = ifelse(is.na(n), 0, n)) %>%
+  filter(time_diff <= 900) %>%
+  ungroup() 
+```
+
+## **Front end fit date with back end**
+
+```{r}
+front_end_fit_date <- front_end_ui %>%
+  filter(date >= min(back_end$date), date <= max(back_end$date))
+```
+
+# **Analysis**
+
+## **Retry**
+
+### **Biểu đồ cột cho số lần thử lại**
+
+```{r}
+number_user_retry %>%
+  group_by(retry_rate) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n)) %>%
+  ggplot(aes(x = fct_reorder(as.factor(retry_rate), n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Trên 42% những người sử dụng đã thử lại ít nhất 1 đến 4 lần",
+       subtitle = "Hơn 50% lượng người sử dụng không thử lại",
+       x = "Số lần thử lại",
+       y = "Lượng người")
+
+number_user_retry %>%
+  group_by(retry_rate) %>%
+  summarise(n = n()/3950) %>%
+  arrange(desc(n))
+```
+
+### **Thử bỏ thêm filter người có status B**
+
+```{r}
+number_user_retry_and_B_status %>%
+  group_by(retry_rate, B_num) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n)) %>% 
+  ggplot() +
+  geom_col(aes(x = fct_reorder(as.factor(retry_rate), n), y = n, 
+             fill = factor(B_num))) +
+  coord_flip() +
+  labs(title = "Những người có ít nhất 1 B result tập trung ở những người thử 0, 1, 2, 3, 4, 5 lần",
+       subtitle = "",
+       x = "Số lần thử lại",
+       y = "Lượng người",
+       fill = "Had B") 
+
+number_user_retry_and_B_status %>%
+  group_by(retry_rate, B_num) %>%
+  summarise(n = n()) %>%
+  ungroup() %>%
+  group_by(retry_rate) %>%
+  mutate(n/sum(n))
+
+
+number_user_retry_and_B_status_and_user_type %>%
+  group_by(retry_rate, B_num, type) %>%
+  summarise(n = n()) %>% 
+  arrange(desc(n)) %>%
+  ggplot() +
+  geom_col(aes(x = fct_reorder(as.factor(retry_rate), -n), y = n, 
+             fill = factor(B_num))) +
+  facet_wrap(~ as.factor(type)) +
+  labs(title = "",
+       subtitle = "",
+       x = "Số lần thử lại",
+       y = "Lượng người",
+       fill = "Had B") 
+```
+
+### **Thử bỏ thêm filter người sử dụng new hay old UI**
+
+```{r}
+number_user_retry_and_user_type %>%
+  group_by(retry_rate, type) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n)) %>%
+  ggplot(aes(x = fct_reorder(as.factor(retry_rate), desc(n)), y = n, fill = type)) +
+  geom_col() +
+  geom_text(
+    aes(label = n),
+    colour = "black", size = 3,
+    vjust = 1.5, position = position_dodge(.9)
+  ) +
+  labs(title = "Mối quan hệ e^(-x) có sự khác nhau giữa UI mới và cũ ",
+       y = "Lượng người",
+       x = "Số lần thử lại",
+       fill = "Type of user")
+
+number_user_retry_and_user_type %>%
+  group_by(retry_rate, type) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n)) %>%
+  ggplot(aes(x = fct_reorder(as.factor(retry_rate), desc(n)), y = n, fill = type)) +
+  geom_col() +
+  geom_text(
+    aes(label = n),
+    colour = "black", size = 3,
+    vjust = 1.5, position = position_dodge(.9)
+  ) +
+  geom_line(aes(factor(retry_rate), n, group = 1)) +
+  geom_point(aes(factor(retry_rate), n)) +
+  facet_wrap(~ type, scales = "free") +
+  labs(title = "Mối quan hệ e^(-x) có sự khác nhau giữa UI mới và cũ ",
+       y = "Lượng người",
+       x = "Số lần thử lại",
+       fill = "Type of user")
+```
+
+## **Front end**
+
+### **xy8 là nút liên kết ngay**
+
+```{r}
+front_end_fit_date %>%
+  inner_join(back_end_list_id, by = "id") %>%
+  group_by(id) %>%
+  arrange(date) %>%
+  slice(n()-1,n()) %>%
+  ungroup() %>%
+  group_by(eventid) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+
+front_end_fit_date %>%
+  select(id) %>%
+  unique() %>%
+  inner_join(back_end, by = "id")
+```
+
+### **Interaction over hour using entire front end**
+
+```{r}
+front_end %>%
+  mutate(hour = hour(date)) %>%
+  group_by(hour) %>%
+  summarise(n = n()) %>%
+  ggplot(aes(x = factor(hour), y = n)) +
+  geom_point() +
+  geom_line(group = 1) +
+  geom_hline(yintercept=8203, linetype="dashed", color = "blue", size = 1) +
+  geom_hline(yintercept=7049, linetype="dashed", color = "red", size = 1) +
+  geom_text(aes(0, 8203, label = "Mean-8203", vjust = -1, hjust = -1), size = 4) +
+  geom_text(aes(0, 7049, label = "Median-7049", vjust = -1, hjust = -1), size = 4) 
+
+front_end %>%
+  mutate(hour = hour(date)) %>%
+  group_by(hour) %>%
+  summarise(n = n()) %>%
+  ungroup() %>%
+  summarise(
+            mean = mean(n),
+            median = median(n))
+```
+
+### **Interaction over hour using fit front end**
+
+```{r}
+front_end_fit_date %>%
+  mutate(hour = hour(date)) %>%
+  group_by(hour) %>%
+  summarise(n = n()) %>%
+  ggplot(aes(x = factor(hour), y = n)) +
+  geom_point() +
+  geom_line(group = 1) +
+  geom_hline(yintercept=4424, linetype="dashed", color = "blue", size = 1) +
+  geom_hline(yintercept=4047, linetype="dashed", color = "red", size = 1) +
+  geom_hline(yintercept=9014, linetype="dashed", color = "cyan", size = 1) +
+  geom_hline(yintercept=1240, linetype="dashed", color = "black", size = 1) +
+  geom_text(aes(0, 4424, label = "Mean-4424", vjust = -1, hjust = -1), size = 4) +
+  geom_text(aes(0, 4047  , label = "Median-4047  ", vjust = -1, hjust = -1), size = 4) 
+
+front_end_fit_date %>%
+  mutate(hour = hour(date)) %>%
+  group_by(hour) %>%
+  summarise(n = n()) %>%
+  ungroup() %>%
+  summarise(max = max(n),
+            mean = mean(n),
+            median = median(n),
+            min = min(n))
+```
+
+## **Average time using of each user**
+
+```{r}
+time_using_each_id <- time_diff_15_min %>%
+  group_by(id, screenid) %>%
+  summarise(total_spend = sum(time_diff)/(n+1)) %>%
+  unique()
+
+time_using_each_id %>%
+  inner_join(user_type) %>%
+  inner_join(B_status_backend) %>%
+  inner_join(number_user_retry) %>%
+  ggplot(aes(x = total_spend, y = retry_rate)) +
+  geom_point(aes(color = factor(type))) +
+  facet_wrap(~ type) +
+  geom_smooth(method = "lm", se = FALSE)
+
+time_using_each_id %>%
+  inner_join(user_type) %>%
+  inner_join(B_status_backend) %>%
+  inner_join(number_user_retry) %>%
+  mutate(B_num = ifelse(B_num>=1, 1, 0)) %>%
+  ggplot(aes(x = total_spend+1, y = retry_rate)) +
+  geom_point(aes(color = factor(B_num))) +
+  facet_wrap(~ type) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_x_log10()
+
+avg_time <- time_using_each_id %>%
+  inner_join(user_type) %>%
+  inner_join(B_status_backend) %>%
+  inner_join(number_user_retry) %>%
+  mutate(B_num = ifelse(B_num>=1, 1, 0))
+
+avg_time %>%
+  ggplot(aes(x = type, y = total_spend)) +
+  geom_boxplot()
+
+avg_time %>%
+  ggplot(aes(x = factor(B_num), y = total_spend)) +
+  geom_boxplot()
+```
+
+```{r}
+number_of_time_use_UI_of_user <- time_diff_15_min %>% 
+  mutate(n = n+1) %>%
+  select(id, n) %>%
+  unique()
+
+time_diff_15_min %>% 
+  group_by(screenid) %>%
+  summarise(sum = sum(time_diff)) %>%
+  arrange(desc(sum))
+
+back_end %>%
+  inner_join(user_type) %>%
+  group_by(id) %>%
+  arrange(date) %>%
+  slice(-1) %>%
+  group_by(type, stepresult) %>%
+  summarise(n = n()) %>%
+  ungroup() %>%
+  gt::gt()
+```
+
+```{r}
+avg_time_screenid<- time_diff_15_min %>%
+  group_by(id, screenid) %>%
+  summarise(total_spend = sum(time_diff)/(n+1)) %>%
+  unique() %>%
+  ungroup() %>%
+  group_by(screenid) %>%
+  summarise(avg = sum(total_spend)/n())
+
+interaction_screen <- front_end_ui %>%
+  group_by(screenid) %>%
+  summarise(number_of_interaction = n())
+
+eventid <- front_end_ui %>%
+  select(eventid, screenid) %>%
+  unique() %>%
+  group_by(screenid) %>% 
+  summarise(n = n()) %>%
+  inner_join(avg_time_screenid, by = "screenid") %>%
+  inner_join(interaction_screen, by = "screenid") %>%
+  ungroup()
+
+write.csv(eventid, "eventid.csv")
+
+front_end_ui %>%
+  unique() %>%
+  filter(screenid != "11") %>%
+  group_by(eventid) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+
+front_end_ui %>%
+  arrange(type, desc(id), date) %>% View()
+```
+
+```{r}
+front_end %>%
+  unique()
+
+front_end 
+
+time_diff <- time_diff %>% ungroup()
+user_retry <- user_retry %>% ungroup()
+
+time_diff %>%
+  filter(!is.na(next_date)) 
+
+time_using_each_id %>%
+  ggplot(aes(x = total_spend+1, fill = factor(screenid))) +
+  geom_histogram() +
+  scale_x_log10() +
+  facet_wrap(~ factor(screenid), scales = "free")
+
+time_using_each_id %>%
+  ggplot(aes(x = total_spend, fill = factor(screenid))) +
+  geom_histogram() +
+  facet_wrap(~ factor(screenid), scales = "free")
+
+front_end %>%
+  group_by(id, eventid) %>%
+  unique() %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+  
+front_end %>%
+  filter(screenid != 11) %>%
+  select(id, eventid) %>%
+  unique() %>%
+  group_by(id) %>%
+  summarise(n = n()) %>% 
+  ggplot(aes(x = n)) +
+  geom_histogram(fill = "blue") +
+  geom_vline(xintercept = 1, linetype="dashed", color = "red") +
+  geom_vline(xintercept = 12, linetype="dashed", color = "red") 
+
+front_end %>%
+  filter(screenid != 11) %>%
+  select(id, eventid) %>%
+  unique() %>%
+  group_by(id) %>%
+  summarise(n = n()) %>%
+  ungroup() %>%
+  summarize(
+            P95 = quantile(n, 0.95),
+            P5 = quantile(n, 0.05)) 
+
+front_end %>%
+  filter(id == "FFDBDJFJGCIJHBBACIA") %>% View()
+
+arrange_front_end <- front_end_ui %>%
+  arrange(id, date) 
+
+write.csv(arrange_front_end, "arrange_front_end.csv")
+```
+
+
+

@@ -1,0 +1,268 @@
+---
+title: "DAZONE Round 1"
+author: "Hoang-Chau Luong"
+date: "5/31/2022"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    code_folding: hide
+    theme: readable
+    highlight: haddock
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(here)
+library(dunnr)
+extrafont::loadfonts(device = "win", quiet = TRUE)
+theme_set(theme_td())
+set_geom_fonts()
+set_palette()
+```
+
+
+# **Import Data & Cleaning**
+
+## **Formating Column Name**
+
+Because the columns name of data have space, this is not format in R. So we need to rename the column by using two ways:
+
+1. Using function `gsub` to replace the space " " by "_", the difference between `sub` and `gsub` that is `gsub` replace all of space in a name. Not the only first space is replaced. 
+
+```{r message=FALSE, warning=FALSE}
+inject.dot <- function(df){
+  names(df) <- gsub(" ", "_", names(df));
+  df
+}
+
+category <- read_csv("data/Category.csv")%>%
+  inject.dot()
+date <- read_csv("data/Date.csv")%>%
+  inject.dot()
+defect_type <- read_csv("data/Defect_Type.csv")%>%
+  inject.dot()
+defect <- read_csv("data/Defect.csv")%>%
+  inject.dot()
+material <- read_csv("data/Material_Type.csv")%>%
+  inject.dot()
+metrics <- read_csv("data/Metrics.csv")%>%
+  inject.dot()
+plant <- read_csv("data/Plant.csv")%>%
+  inject.dot()
+vendor <- read_csv("data/Vendor.csv")%>%
+  inject.dot()
+```
+
+2. Using built-in function `make.names` and function `rename_all` in `dplyr` package. The only drawback of this approach is only using "." to replace space " ", but not can use "_".
+
+```{r message=FALSE, warning=FALSE, eval = FALSE}
+category <- read_csv("data/Category.csv")%>%
+  dplyr::rename_all(funs(make.names(.)))
+date <- read_csv("data/Date.csv")%>%
+  dplyr::rename_all(funs(make.names(.)))
+defect_type <- read_csv("data/Defect_Type.csv")%>%
+  dplyr::rename_all(funs(make.names(.)))
+defect <- read_csv("data/Defect.csv")%>%
+  dplyr::rename_all(funs(make.names(.)))
+material <- read_csv("data/Material_Type.csv")%>%
+  dplyr::rename_all(funs(make.names(.)))
+metrics <- read_csv("data/Metrics.csv")%>%
+  dplyr::rename_all(funs(make.names(.)))
+plant <- read_csv("data/Plant.csv")%>%
+  dplyr::rename_all(funs(make.names(.)))
+vendor <- read_csv("data/Vendor.csv")%>%
+  dplyr::rename_all(funs(make.names(.)))
+```
+
+## **Check Whether Data has Missing Values**
+
+1. The first way to count number of missing values is using `select(everything())` and `summarize_all(funs(sum(is.na(.))))` to create all column to contain result of counting missing values, in `funs()` we add function `sum(is.na(.))` meaning count all rows have missing values.
+
+```{r message=FALSE, warning=FALSE, eval = FALSE}
+category %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))))
+date %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))))
+defect %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))))
+defect_type %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))))
+material %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))))
+metrics %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))))
+plant %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))))
+vendor %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))))
+```
+
+
+2. **Visualize missing value**
+
+```{r message=FALSE, warning=FALSE, eval = FALSE}
+missing.values <- metrics %>%
+    gather(key = "key", value = "val") %>%
+    mutate(is.missing = is.na(val)) %>%
+    group_by(key, is.missing) %>%
+    summarise(num.missing = n()) %>%
+    filter(is.missing==T) %>%
+    select(-is.missing) %>%
+    arrange(desc(num.missing)) 
+
+missing.values %>%
+  ggplot() +
+    geom_bar(aes(x=key, y=num.missing), stat = 'identity') +
+    labs(x='variable', y="number of missing values", title='Number of missing values') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+missing.values <- metrics %>%
+  gather(key = "key", value = "val") %>%
+  mutate(isna = is.na(val)) %>%
+  group_by(key) %>%
+  mutate(total = n()) %>%
+  group_by(key, total, isna) %>%
+  summarise(num.isna = n()) %>%
+  mutate(pct = num.isna / total * 100)
+
+levels <-
+    (missing.values  %>% filter(isna == T) %>% arrange(desc(pct)))$key
+
+percentage.plot <- missing.values %>%
+      ggplot() +
+        geom_bar(aes(x = reorder(key, desc(pct)), 
+                     y = pct, fill=isna), 
+                 stat = 'identity', alpha=0.8) +
+      scale_x_discrete(limits = levels) +
+      scale_fill_manual(name = "", 
+                        values = c('steelblue', 'tomato3'), labels = c("Present", "Missing")) +
+      coord_flip() +
+      labs(title = "Percentage of missing values", x =
+             'Variable', y = "% of missing values")
+
+percentage.plot
+
+row.plot <- df %>%
+  mutate(id = row_number()) %>%
+  gather(-id, key = "key", value = "val") %>%
+  mutate(isna = is.na(val)) %>%
+  ggplot(aes(key, id, fill = isna)) +
+    geom_raster(alpha=0.8) +
+    scale_fill_manual(name = "",
+        values = c('steelblue', 'tomato3'),
+        labels = c("Present", "Missing")) +
+    scale_x_discrete(limits = levels) +
+    labs(x = "Variable",
+           y = "Row Number", title = "Missing values in rows") +
+    coord_flip()
+
+row.plot
+
+grid.arrange(percentage.plot, row.plot, ncol = 2)
+```
+
+
+After doing exploration, our data do not have any missing values. Congratulation.
+
+# **EDA**
+
+1. **Find which vendor has the most defect product in 2 years 2013 and 2014?**
+
+```{r message=FALSE, warning=FALSE}
+metrics %>%
+  group_by(Vendor_ID) %>%
+  summarise(total_defect_qty = sum(Defect_Qty)) %>%
+  arrange(desc(total_defect_qty)) %>%
+  right_join(vendor) %>%
+  head(10) %>%
+  gt::gt()
+```
+
+2. **Find which vendor has the most defect product in year 2013 & year 2014**
+
+First, we need to extract year from date to be able to group by.
+
+* We see that format of date in data is `%m/%d/%Y %H:%M`, so we use function format to extract date follow this format of date `format(as.Date(metrics$Date, format="%m/%d/%Y %H:%M"),"%Y")`. After that we gain a year with redundant 2 first 00 number, so then we use function `substr` to extract character from index 3 to 4.
+
+```{r message=FALSE, warning=FALSE}
+# gsub(".*/","",metrics$Date)
+# substr(metrics$Date, 7, 8)
+# 
+# format(as.Date(metrics$Date, format="%m/%d/%Y %H:%M"),"%Y")
+
+metrics %>%
+  mutate(year = substr(
+    format(as.Date(metrics$Date, format="%m/%d/%Y %H:%M"),"%Y"), 3, 4
+  )) %>%
+  group_by(Vendor_ID, year) %>%
+  summarise(total_defect_qty = sum(Defect_Qty)) %>%
+  arrange(desc(total_defect_qty)) %>%
+  right_join(vendor, by = "Vendor_ID") %>%
+  head(10) 
+```
+
+   From table we see that:
+* `Plustax` has highest defect product in year 2013 with 3486268 defect products
+* `Quotelane` has highest  defect product in year 2014 with 2155354 defect products
+
+3. **Company has a highest down time**
+
+```{r message=FALSE, warning=FALSE}
+metrics %>%
+  group_by(Plant_ID) %>%
+  summarize(total_downtime = sum(`Downtime_(min)`)) %>%
+  ungroup() %>%
+  mutate(percent_downtime = total_downtime/sum(total_downtime)) %>%
+  arrange(desc(total_downtime)) %>%
+  right_join(plant, by = "Plant_ID") %>%
+  head(10) %>%
+  gt::gt()
+```
+
+* Springfield, IL has highest `total_downtime` with 17311 mins and gain $12.4\%$.
+
+4. **Company has highest defect product**
+
+```{r message=FALSE, warning=FALSE}
+metrics %>%
+  group_by(Plant_ID) %>%
+  summarize(total_defect_qty = sum(Defect_Qty)) %>%
+  arrange(desc(total_defect_qty)) %>%
+  right_join(plant, by = "Plant_ID") %>%
+  head(10) %>%
+  gt::gt()
+```
+
+From the table we see that:
+
+* Detriot, Ml has a highest defect product with value 6686876.
+
+5. **Which material is better than others materials**
+
+```{r message=FALSE, warning=FALSE}
+metrics %>%
+  group_by(Material_Type_ID) %>%
+  summarize(total_defect_qty = sum(Defect_Qty)) %>%
+  arrange(total_defect_qty) %>%
+  right_join(material, by = "Material_Type_ID") %>%
+  head(10) %>%
+  gt::gt()
+```
+
+From the table, we see that `Wires` has lowest defect product, so that means this material is better than the others
