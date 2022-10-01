@@ -518,12 +518,10 @@ front_end %>%
             P5 = quantile(n, 0.05)) 
 
 front_end %>%
-  filter(id == "FFDBDJFJGCIJHBBACIA") %>% View()
+  filter(id == "FFDBDJFJGCIJHBBACIA") 
 
 arrange_front_end <- front_end_ui %>%
   arrange(id, date) 
-
-write.csv(arrange_front_end, "arrange_front_end.csv")
 ```
 
 
